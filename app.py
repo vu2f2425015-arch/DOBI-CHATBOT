@@ -24,18 +24,16 @@ GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 GROQ_BASE_URL = "https://api.groq.com/openai/v1"
 MODEL_NAME = "openai/gpt-oss-120b"  # Groq's current general-purpose model
 
-if not GROQ_API_KEY:
-    raise ValueError(
-        "GROQ_API_KEY not found. Create a .env file with GROQ_API_KEY=your-key-here"
-    )
-
 SYSTEM_PROMPT = (
     "You are DOBI, a friendly, helpful, and slightly witty AI assistant. "
     "You keep answers clear and concise, and you're always encouraging. "
     "If you don't know something, admit it honestly."
 )
 
-client = OpenAI(api_key=GROQ_API_KEY, base_url=GROQ_BASE_URL)
+# NOTE: we no longer raise at import time if the key is missing, because on
+# Vercel that crashes every single request with an opaque 500. Instead we
+# check for it inside the /api/chat route below and return a clear JSON error.
+client = OpenAI(api_key=GROQ_API_KEY or "missing-key", base_url=GROQ_BASE_URL)
 
 # Simple in-memory conversation history (single user, resets on server restart)
 conversation_history = [{"role": "system", "content": SYSTEM_PROMPT}]
@@ -48,6 +46,13 @@ def home():
 
 @app.route("/api/chat", methods=["POST"])
 def chat():
+    if not GROQ_API_KEY:
+        return jsonify({
+            "error": "GROQ_API_KEY is not set on the server. "
+                     "Add it in Vercel: Settings > Environment Variables, "
+                     "then redeploy."
+        }), 500
+
     data = request.get_json(force=True)
     user_message = (data.get("message") or "").strip()
 
@@ -67,7 +72,9 @@ def chat():
         return jsonify({"reply": reply})
 
     except Exception as e:
-        return jsonify({"error": f"Groq API error: {str(e)}"}), 500
+        # Return the real error so it's visible in the browser Network tab,
+        # instead of only in server logs.
+        return jsonify({"error": f"Groq API error ({type(e).__name__}): {str(e)}"}), 500
 
 
 @app.route("/api/reset", methods=["POST"])
